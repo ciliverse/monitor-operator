@@ -1,0 +1,406 @@
+# 完整的MonitorStack示例配置
+# 这个示例展示了所有可用的配置选项
+
+apiVersion: monitoring.cillian.website/v1
+kind: MonitorStack
+metadata:
+  name: complete-monitoring-stack
+  namespace: monitoring
+  labels:
+    environment: production
+    team: platform
+    version: v1.0.0
+spec:
+  # Prometheus配置
+  prometheus:
+    # 启用Prometheus
+    enabled: true
+    
+    # 镜像配置
+    image: prom/prometheus
+    tag: v2.45.0
+    
+    # 资源配置
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    
+    # 存储配置 - 使用持久化存储
+    storage:
+      size: 50Gi
+      storageClass: fast-ssd
+    
+    # 服务配置
+    service:
+      type: ClusterIP
+      port: 9090
+      labels:
+        monitoring: prometheus
+        expose: "true"
+    
+    # 数据保留时间
+    retention: "90d"
+    
+    # 自定义Prometheus配置
+    config: |
+      # 全局配置
+      global:
+        scrape_interval: 15s
+        evaluation_interval: 15s
+        external_labels:
+          cluster: 'production'
+          region: 'us-west-2'
+
+      # 规则文件
+      rule_files:
+        - "/etc/prometheus/rules/*.yml"
+
+      # 抓取配置
+      scrape_configs:
+        # Prometheus自监控
+        - job_name: 'prometheus'
+          static_configs:
+            - targets: ['localhost:9090']
+
+        # Kubernetes API Server
+        - job_name: 'kubernetes-apiservers'
+          kubernetes_sd_configs:
+            - role: endpoints
+          scheme: https
+          tls_config:
+            ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+              action: keep
+              regex: default;kubernetes;https
+
+        # Kubernetes Nodes
+        - job_name: 'kubernetes-nodes'
+          kubernetes_sd_configs:
+            - role: node
+          scheme: https
+          tls_config:
+            ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+          relabel_configs:
+            - action: labelmap
+              regex: __meta_kubernetes_node_label_(.+)
+
+        # Kubernetes Pods
+        - job_name: 'kubernetes-pods'
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+              action: keep
+              regex: true
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+              action: replace
+              target_label: __metrics_path__
+              regex: (.+)
+            - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+              action: replace
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: $1:$2
+              target_label: __address__
+            - action: labelmap
+              regex: __meta_kubernetes_pod_label_(.+)
+            - source_labels: [__meta_kubernetes_namespace]
+              action: replace
+              target_label: kubernetes_namespace
+            - source_labels: [__meta_kubernetes_pod_name]
+              action: replace
+              target_label: kubernetes_pod_name
+
+        # Kubernetes Services
+        - job_name: 'kubernetes-services'
+          kubernetes_sd_configs:
+            - role: service
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+              action: keep
+              regex: true
+            - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+              action: replace
+              target_label: __metrics_path__
+              regex: (.+)
+            - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+              action: replace
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: $1:$2
+              target_label: __address__
+            - action: labelmap
+              regex: __meta_kubernetes_service_label_(.+)
+            - source_labels: [__meta_kubernetes_namespace]
+              action: replace
+              target_label: kubernetes_namespace
+            - source_labels: [__meta_kubernetes_service_name]
+              action: replace
+              target_label: kubernetes_service_name
+
+      # 告警配置
+      alerting:
+        alertmanagers:
+          - static_configs:
+              - targets:
+                - alertmanager:9093
+
+  # Grafana配置
+  grafana:
+    # 启用Grafana
+    enabled: true
+    
+    # 镜像配置
+    image: grafana/grafana
+    tag: 10.0.0
+    
+    # 资源配置
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    
+    # 服务配置
+    service:
+      type: LoadBalancer
+      port: 3000
+      labels:
+        monitoring: grafana
+        expose: "true"
+    
+    # 管理员密码
+    adminPassword: "secure-admin-password-123"
+    
+    # 数据源配置
+    datasources:
+      # Prometheus数据源
+      - name: prometheus
+        type: prometheus
+        url: http://complete-monitoring-stack-prometheus:9090
+      
+      # Loki日志数据源（如果有）
+      - name: loki
+        type: loki
+        url: http://loki:3100
+      
+      # Elasticsearch数据源（如果有）
+      - name: elasticsearch
+        type: elasticsearch
+        url: http://elasticsearch:9200
+    
+    # 仪表板配置
+    dashboards:
+      # Kubernetes集群监控仪表板
+      - name: kubernetes-cluster-monitoring
+        url: https://grafana.com/api/dashboards/315/revisions/3/download
+      
+      # Node Exporter仪表板
+      - name: node-exporter-full
+        url: https://grafana.com/api/dashboards/1860/revisions/27/download
+      
+      # Prometheus统计仪表板
+      - name: prometheus-stats
+        url: https://grafana.com/api/dashboards/2/revisions/2/download
+
+  # 通用配置
+  namespace: monitoring
+  
+  # 自定义标签 - 将应用到所有创建的资源
+  labels:
+    environment: production
+    team: platform
+    cost-center: "engineering"
+    backup: "required"
+    monitoring: "enabled"
+
+---
+# 简单的MonitorStack示例配置
+# 适用于快速开始和测试环境
+
+apiVersion: monitoring.cillian.website/v1
+kind: MonitorStack
+metadata:
+  name: simple-monitoring
+  namespace: default
+spec:
+  # 启用Prometheus，使用默认配置
+  prometheus:
+    enabled: true
+    # 其他配置使用默认值
+  
+  # 启用Grafana，使用默认配置
+  grafana:
+    enabled: true
+    # 设置管理员密码
+    adminPassword: "admin123"
+    # 配置Prometheus数据源
+    datasources:
+      - name: prometheus
+        type: prometheus
+        url: http://simple-monitoring-prometheus:9090
+
+---
+# 仅Prometheus的MonitorStack示例
+# 适用于只需要指标收集的场景
+
+apiVersion: monitoring.cillian.website/v1
+kind: MonitorStack
+metadata:
+  name: prometheus-only
+  namespace: metrics
+spec:
+  # 启用Prometheus
+  prometheus:
+    enabled: true
+    image: prom/prometheus
+    tag: v2.45.0
+    
+    # 配置资源
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    
+    # 配置持久化存储
+    storage:
+      size: 20Gi
+    
+    # 配置服务
+    service:
+      type: NodePort
+      port: 9090
+      nodePort: 30090
+    
+    # 数据保留30天
+    retention: "30d"
+  
+  # 禁用Grafana
+  grafana:
+    enabled: false
+
+---
+# 仅Grafana的MonitorStack示例
+# 适用于连接外部Prometheus的可视化场景
+
+apiVersion: monitoring.cillian.website/v1
+kind: MonitorStack
+metadata:
+  name: grafana-only
+  namespace: visualization
+spec:
+  # 禁用Prometheus
+  prometheus:
+    enabled: false
+  
+  # 启用Grafana
+  grafana:
+    enabled: true
+    image: grafana/grafana
+    tag: 10.0.0
+    
+    # 配置资源
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 300m
+        memory: 512Mi
+    
+    # 配置服务
+    service:
+      type: LoadBalancer
+      port: 3000
+    
+    # 管理员密码
+    adminPassword: "grafana-admin-2023"
+    
+    # 连接外部Prometheus
+    datasources:
+      - name: external-prometheus
+        type: prometheus
+        url: http://external-prometheus.monitoring.svc.cluster.local:9090
+      
+      - name: external-loki
+        type: loki
+        url: http://external-loki.logging.svc.cluster.local:3100
+
+---
+# 开发环境MonitorStack示例
+# 适用于开发和测试环境，资源配置较小
+
+apiVersion: monitoring.cillian.website/v1
+kind: MonitorStack
+metadata:
+  name: dev-monitoring
+  namespace: development
+  labels:
+    environment: development
+    purpose: testing
+spec:
+  prometheus:
+    enabled: true
+    image: prom/prometheus
+    tag: latest
+    
+    # 开发环境使用较小的资源配置
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    
+    # 不使用持久化存储（数据重启后丢失）
+    # storage: {}
+    
+    service:
+      type: ClusterIP
+      port: 9090
+    
+    # 数据保留时间较短
+    retention: "7d"
+  
+  grafana:
+    enabled: true
+    image: grafana/grafana
+    tag: latest
+    
+    # 开发环境使用较小的资源配置
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    
+    service:
+      type: NodePort
+      port: 3000
+      nodePort: 30300
+    
+    adminPassword: "dev123"
+    
+    datasources:
+      - name: prometheus
+        type: prometheus
+        url: http://dev-monitoring-prometheus:9090
+  
+  # 开发环境标签
+  labels:
+    environment: development
+    auto-cleanup: "enabled"
+    cost-optimization: "enabled"
